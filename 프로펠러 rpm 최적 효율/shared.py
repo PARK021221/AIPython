@@ -528,13 +528,13 @@ def render_workflow_banner():
     if st.session_state.voyage_confirmed and st.session_state.rpm_confirmed:
         _dec = st.session_state.voyage_decision or "확인 완료"
         st.success(
-            f"✅ ① 출항 확인 완료 ({_dec}) · ② RPM 확인 완료 — "
-            "**② RPM 최적 효율** 탭에서 결과를 확인하세요."
+            f"✅ 1. 출항 확인 완료 ({_dec}) · 2. RPM 확인 완료 — "
+            "왼쪽 메뉴 **2. RPM 최적 효율** 페이지에서 결과를 확인하세요."
         )
     elif st.session_state.voyage_confirmed:
         st.info("👈 사이드바 **✅ ② RPM 확인** 버튼을 눌러 주세요.")
     else:
-        st.info("👈 먼저 **① 출항 조건** 탭에서 조건을 입력하고 **확인** 버튼을 눌러 주세요.")
+        st.info("👈 먼저 **1. 출항 조건** 페이지에서 조건을 입력하고 **확인** 버튼을 눌러 주세요.")
 
 
 def load_dashboard_data():
