@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>선박 출항 판단기</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;background:#eef4f7;color:#17324d;font-family:Arial,"Malgun Gothic",sans-serif}
+    header{background:linear-gradient(120deg,#073b5c,#087e8b);color:white;padding:32px 20px;text-align:center}
+    header h1{margin:0 0 8px;font-size:30px} header p{margin:0;opacity:.85}
+    main{max-width:760px;margin:28px auto;padding:0 16px}.card{background:white;border-radius:16px;padding:26px;box-shadow:0 8px 28px #1233}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px} label{display:block;font-weight:700;margin-bottom:7px}
+    input[type=number]{width:100%;padding:12px;border:1px solid #b8c8d1;border-radius:8px;font-size:16px}
+    fieldset{border:1px solid #d1dde3;border-radius:10px;margin:22px 0;padding:15px}legend{font-weight:700}
+    .checks{display:grid;grid-template-columns:1fr 1fr;gap:12px}.checks label{font-weight:400;margin:0}
+    button{width:100%;padding:14px;border:0;border-radius:9px;background:#087e8b;color:white;font-size:17px;font-weight:700;cursor:pointer}
+    button:hover{background:#066a75}#result{display:none;margin-top:20px;padding:18px;border-radius:10px}#result h2{margin:0 0 10px}
+    .allowed{background:#e5f7ed;color:#176b3a}.conditional{background:#fff4d8;color:#805b00}.prohibited{background:#fde7e7;color:#9c2424}
+    .notice{font-size:13px;line-height:1.5;color:#5c6e78;margin-top:18px}@media(max-width:600px){.grid,.checks{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><header><h1>⚓ 선박 출항 판단기</h1><p>기상 및 선박 상태 기반 의사결정 보조</p></header>
+<main><section class="card"><form id="form">
+  <div class="grid">
+    <div><label for="wind">풍속 (m/s)</label><input id="wind" name="wind" type="number" min="0" step="0.1" value="8" required></div>
+    <div><label for="wave">파고 (m)</label><input id="wave" name="wave" type="number" min="0" step="0.1" value="1.5" required></div>
+    <div><label for="visibility">시정 (km)</label><input id="visibility" name="visibility" type="number" min="0" step="0.1" value="3" required></div>
+    <div><label for="length">선박 길이 (m)</label><input id="length" name="length" type="number" min="1" step="0.1" value="20" required></div>
+  </div>
+  <fieldset><legend>선박 및 운항 상태</legend><div class="checks">
+    <label><input name="engine_ok" type="checkbox" checked> 기관 정상</label>
+    <label><input name="navigation_ok" type="checkbox" checked> 항해 장비 정상</label>
+    <label><input name="lifesaving_ok" type="checkbox" checked> 구명 장비 정상</label>
+    <label><input name="crew_ready" type="checkbox" checked> 승무원 준비 완료</label>
+    <label><input name="weather_warning" type="checkbox"> 기상특보 발효 중</label>
+  </div></fieldset>
+  <button type="submit">출항 가능 여부 판단</button>
+  <div id="result"><h2 id="decision"></h2><div id="reasons"></div></div>
+  <p class="notice">※ 교육용 예시입니다. 실제 출항은 최신 기상정보, 관할 법규와 선장·운항관리자의 승인을 따라야 합니다.</p>
+</form></section></main>
+<script>
+const form=document.querySelector('#form'), box=document.querySelector('#result');
+form.addEventListener('submit',async(e)=>{e.preventDefault();
+  try{const res=await fetch('/assess',{method:'POST',body:new URLSearchParams(new FormData(form))});const data=await res.json();
+    if(!res.ok)throw new Error(data.error); const key=data.decision==='출항 가능'?'allowed':data.decision==='조건부 가능'?'conditional':'prohibited';
+    box.className=key;box.style.display='block';document.querySelector('#decision').textContent=data.decision;
+    document.querySelector('#reasons').textContent='판정 사유: '+data.reasons.join(', ');
+  }catch(err){box.className='prohibited';box.style.display='block';document.querySelector('#decision').textContent='오류';document.querySelector('#reasons').textContent=err.message;}
+});
+</script></body></html>
