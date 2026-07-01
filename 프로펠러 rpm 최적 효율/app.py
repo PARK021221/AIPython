@@ -15,6 +15,7 @@ from charts import (
     draw_rpm_efficiency_curve,
 )
 from database import (
+    DB_PATH,
     create_database,
     delete_departure_record,
     delete_record,
@@ -23,6 +24,7 @@ from database import (
     save_departure_record,
     save_record,
 )
+import sqlite3
 import test_samples as _test_samples_mod
 importlib.reload(_test_samples_mod)
 RPM_CASES = _test_samples_mod.RPM_CASES
@@ -63,6 +65,57 @@ def _rpm_case_preview(case: dict) -> dict:
         case["rpm_min"],
         case["rpm_max"],
     )
+
+
+def _update_rpm_record(
+    record_id: int,
+    propeller_name: str,
+    vessel_speed: float,
+    propeller_diameter: float,
+    rpm: float,
+    shaft_power: float,
+    thrust: float,
+    rpm_min: float,
+    rpm_max: float,
+) -> bool:
+    """저장된 RPM 기록 수정 (database.update_record 대신 app에서 직접 처리)"""
+    try:
+        result = calculate_all(
+            vessel_speed, rpm, propeller_diameter,
+            thrust, shaft_power, rpm_min, rpm_max,
+        )
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE rpm_records SET
+                propeller_name = ?, vessel_speed = ?, propeller_diameter = ?,
+                rpm = ?, shaft_power = ?, thrust = ?,
+                measured_efficiency = ?, model_efficiency = ?,
+                optimal_rpm = ?, max_efficiency = ?, advance_ratio = ?
+            WHERE id = ?
+            """,
+            (
+                propeller_name,
+                vessel_speed,
+                propeller_diameter,
+                rpm,
+                shaft_power,
+                thrust,
+                result["measured_efficiency"],
+                result["model_efficiency"],
+                result["optimal_rpm"],
+                result["max_efficiency"],
+                result["advance_ratio"],
+                record_id,
+            ),
+        )
+        ok = cur.rowcount > 0
+        conn.commit()
+        conn.close()
+        return ok
+    except (sqlite3.Error, ValueError):
+        return False
 
 
 # ──────────────────────────────────────────
@@ -202,6 +255,10 @@ if "voyage_decision" not in st.session_state:
     st.session_state.voyage_decision = None
 if "voyage_confirmed" not in st.session_state:
     st.session_state.voyage_confirmed = False
+if "rpm_confirmed" not in st.session_state:
+    st.session_state.rpm_confirmed = False
+if "rpm_confirm_snapshot" not in st.session_state:
+    st.session_state.rpm_confirm_snapshot = None
 if "_pending_voyage_reset" not in st.session_state:
     st.session_state._pending_voyage_reset = False
 if "_pending_voyage_sample" not in st.session_state:
@@ -214,6 +271,21 @@ def _apply_reset_values():
         st.session_state[k] = v
     st.session_state.saved = False
     st.session_state.last_snapshot = None
+    st.session_state.rpm_confirmed = False
+    st.session_state.rpm_confirm_snapshot = None
+
+
+def _rpm_input_snapshot():
+    return (
+        st.session_state.form_propeller_name,
+        st.session_state.form_vessel_speed,
+        st.session_state.form_propeller_diameter,
+        st.session_state.form_rpm,
+        st.session_state.form_thrust,
+        st.session_state.form_shaft_power,
+        st.session_state.form_rpm_min,
+        st.session_state.form_rpm_max,
+    )
 
 
 def _apply_sample_case(case: dict):
@@ -228,6 +300,7 @@ def _apply_sample_case(case: dict):
     st.session_state.form_rpm_max = int(case["rpm_max"])
     st.session_state.form_rpm = int(case["rpm"])
     st.session_state.saved = False
+    st.session_state.rpm_confirmed = False
 
 
 def _apply_voyage_sample(case: dict):
@@ -242,6 +315,9 @@ def _apply_voyage_sample(case: dict):
     st.session_state.voyage_saved = False
     st.session_state.voyage_decision = None
     st.session_state.voyage_confirmed = False
+
+
+# 버튼 클릭 후 rerun 시, 위젯보다 먼저 처리
 if st.session_state._pending_reset:
     _apply_reset_values()
     st.session_state._pending_reset = False
@@ -336,7 +412,7 @@ def _voyage_style(decision: Decision) -> tuple[str, str]:
 # ──────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 🧪 연습용 시나리오")
-    st.caption("① 출항 조건 입력 → **확인** 후 ② RPM 순서로 테스트하세요.")
+    st.caption("① 출항 확인 → ② RPM 불러오기 → **✅ ② RPM 확인** → 결과 확인")
 
     rpm_labels = [c["label"] for c in RPM_CASES]
     st.selectbox("시나리오", rpm_labels, key="sample_pick")
@@ -367,6 +443,26 @@ with st.sidebar:
         st.session_state._pending_voyage_sample = _picked
         st.session_state._pending_sample = _picked
         st.rerun()
+
+    if st.session_state.rpm_confirmed:
+        st.success("✅ ② RPM 확인 완료")
+    elif st.button("✅ ② RPM 확인", key="sb_rpm_confirm", use_container_width=True):
+        if _inputs_valid(
+            st.session_state.form_propeller_name,
+            st.session_state.form_vessel_speed,
+            st.session_state.form_propeller_diameter,
+            st.session_state.form_rpm,
+            st.session_state.form_thrust,
+            st.session_state.form_shaft_power,
+            st.session_state.form_rpm_min,
+            st.session_state.form_rpm_max,
+        ):
+            st.session_state.rpm_confirmed = True
+            st.session_state.rpm_confirm_snapshot = _rpm_input_snapshot()
+            st.session_state.saved = False
+            st.rerun()
+        else:
+            st.error("② RPM 불러오기 후 입력값을 확인하거나, 아래에서 직접 입력해 주세요.")
 
     st.divider()
     st.markdown("### ⚓ ② RPM 입력")
@@ -407,9 +503,24 @@ with st.sidebar:
 
     st.divider()
 
+    if st.session_state.rpm_confirmed:
+        if st.button("🔄 RPM 다시 수정", key="rpm_unconfirm", use_container_width=True):
+            st.session_state.rpm_confirmed = False
+            st.session_state.rpm_confirm_snapshot = None
+            st.session_state.saved = False
+            st.rerun()
+
     if st.button("🔄 초기화", key="rpm_reset", use_container_width=True):
         st.session_state._pending_reset = True
         st.rerun()
+
+    if st.session_state.rpm_confirmed and st.session_state.rpm_confirm_snapshot != (
+        propeller_name, vessel_speed, propeller_diameter,
+        rpm, thrust, shaft_power, rpm_min, rpm_max,
+    ):
+        st.session_state.rpm_confirmed = False
+        st.session_state.rpm_confirm_snapshot = None
+        st.session_state.saved = False
 
 
 # ──────────────────────────────────────────
@@ -421,14 +532,28 @@ st.markdown(
     "**① 출항 조건 확인** → **② RPM 최적 효율** → **③ 운항 속도** 순서로 분석합니다."
 )
 
-if st.session_state.voyage_confirmed:
+if st.session_state.voyage_confirmed and st.session_state.rpm_confirmed:
     _dec = st.session_state.voyage_decision or "확인 완료"
-    st.success(f"✅ ① 출항 조건 확인 완료 ({_dec}) — ② RPM 최적 효율 탭으로 진행하세요.")
+    st.success(
+        f"✅ ① 출항 확인 완료 ({_dec}) · ② RPM 확인 완료 — "
+        "**② RPM 최적 효율** 탭에서 결과를 확인하세요."
+    )
+elif st.session_state.voyage_confirmed:
+    st.info("👈 사이드바 **✅ ② RPM 확인** 버튼을 눌러 주세요.")
 else:
     st.info("👈 먼저 **① 출항 조건** 탭에서 조건을 입력하고 **확인** 버튼을 눌러 주세요.")
 
 _saved_df = get_all_records()
 _departure_df = get_all_departure_records()
+
+
+def _load_dashboard_data():
+    """대시보드용 — 매번 DB에서 최신 기록 조회"""
+    rpm_df = get_all_records()
+    dep_df = get_all_departure_records()
+    return rpm_df, dep_df, not rpm_df.empty, not dep_df.empty
+
+
 _has_rpm_records = not _saved_df.empty
 _has_departure_records = not _departure_df.empty
 
@@ -455,6 +580,11 @@ with sim_panel:
             "🔒 **① 출항 조건** 탭에서 기상·선박 정보를 입력한 뒤 "
             "**「확인하고 ② RPM으로 진행」** 버튼을 눌러 주세요."
         )
+    elif not st.session_state.rpm_confirmed:
+        st.warning(
+            "🔒 사이드바 **🧪 연습용 시나리오**에서 값을 불러온 뒤 "
+            "**「✅ ② RPM 확인」** 버튼을 눌러 주세요. (아래 입력값 수정 가능)"
+        )
     else:
         if st.session_state.voyage_decision == Decision.PROHIBITED.value:
             st.warning(
@@ -471,6 +601,7 @@ with sim_panel:
         if st.session_state.last_snapshot != snapshot:
             st.session_state.saved = False
             st.session_state.last_snapshot = snapshot
+            st.session_state.rpm_confirmed = False
 
         if not _inputs_valid(
             propeller_name, vessel_speed, propeller_diameter,
@@ -589,7 +720,7 @@ with sim_panel:
                             )
                             if ok:
                                 st.session_state.saved = True
-                                st.success("저장되었습니다!")
+                                st.success("저장되었습니다! **📊 운항 대시보드** 탭에서 확인하세요.")
                                 st.rerun()
                             else:
                                 st.error("저장 실패")
@@ -786,6 +917,8 @@ with speed_panel:
 
     if not st.session_state.voyage_confirmed:
         st.warning("🔒 **① 출항 조건** 탭에서 **확인**을 완료한 뒤 이용할 수 있습니다.")
+    elif not st.session_state.rpm_confirmed:
+        st.warning("🔒 사이드바 **✅ ② RPM 확인** 을 완료한 뒤 이용할 수 있습니다.")
     else:
         st.markdown("#### 🚢 운항 속도 분석")
         st.caption("① 출항 조건 · ② RPM 최적 효율 확인 후 운항 속도를 분석합니다.")
@@ -810,12 +943,21 @@ with speed_panel:
 # ════════════════════════════════════════════
 with tab_dash:
 
+    _saved_df, _departure_df, _has_rpm_records, _has_departure_records = _load_dashboard_data()
+
     dash_header, dash_refresh = st.columns([4, 1])
     with dash_header:
         st.markdown("#### 운항 대시보드")
+        st.caption("② RPM **이 결과 저장** · ① 출항 **판정 결과 저장** 한 기록이 여기에 모입니다.")
     with dash_refresh:
         if st.button("🔄 새로고침", key="dash_refresh", use_container_width=True):
             st.rerun()
+
+    s1, s2 = st.columns(2)
+    with s1:
+        st.metric("⚓ RPM 분석 기록", f"{len(_saved_df)}건")
+    with s2:
+        st.metric("🌊 출항 판단 기록", f"{len(_departure_df)}건")
 
     if not _has_rpm_records and not _has_departure_records:
         st.info(
@@ -825,7 +967,13 @@ with tab_dash:
     else:
         st.markdown("##### ⚓ RPM 분석 기록")
         if not _has_rpm_records:
-            st.caption("저장된 RPM 분석 기록이 없습니다.")
+            st.info(
+                "저장된 RPM 분석이 없습니다.\n\n"
+                "1. **① 출항 조건** → 확인 완료\n"
+                "2. 사이드바 **② RPM 불러오기** → **✅ ② RPM 확인**\n"
+                "3. **② RPM 최적 효율** 탭에서 **💾 이 결과 저장** 클릭\n"
+                "4. 이 탭(**📊 운항 대시보드**)에서 기록 확인"
+            )
         else:
             df = _saved_df.copy()
             df["RPM편차"] = df["현재RPM"] - df["최적RPM"]
@@ -898,6 +1046,40 @@ with tab_dash:
                     """,
                     unsafe_allow_html=True,
                 )
+
+            with st.expander("✏️ RPM 기록 수정", expanded=False):
+                edit_id = st.selectbox(
+                    "수정할 기록",
+                    df["번호"].tolist(),
+                    format_func=lambda x: f"#{x} {df.loc[df['번호']==x, '프로펠러명'].iloc[0]}",
+                    key="dash_rpm_edit_id",
+                )
+                edit_row = df.loc[df["번호"] == edit_id].iloc[0]
+                _cur_rpm = float(edit_row["현재RPM"])
+                with st.form("rpm_edit_form", clear_on_submit=False):
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        e_name = st.text_input("프로펠러명", value=str(edit_row["프로펠러명"]))
+                        e_speed = st.number_input("선속 (knot)", value=float(edit_row["선속(knot)"]), step=0.5)
+                        e_dia = st.number_input("직경 (m)", value=float(edit_row["직경(m)"]), step=0.1)
+                        e_rpm = st.number_input("현재 RPM", value=_cur_rpm, step=1.0)
+                    with ec2:
+                        e_thrust = st.number_input("추력 (kN)", value=float(edit_row["추력(kN)"]), step=10.0)
+                        e_power = st.number_input("축 출력 (kW)", value=float(edit_row["축출력(kW)"]), step=100.0)
+                        e_rmin = st.number_input("RPM 최소", value=max(1, int(_cur_rpm - 40)), step=5)
+                        e_rmax = st.number_input("RPM 최대", value=int(_cur_rpm + 40), step=5)
+                    if st.form_submit_button("💾 수정 저장", type="primary", use_container_width=True):
+                        if _inputs_valid(e_name, e_speed, e_dia, e_rpm, e_thrust, e_power, e_rmin, e_rmax):
+                            if _update_rpm_record(
+                                int(edit_id), e_name, e_speed, e_dia, e_rpm,
+                                e_power, e_thrust, float(e_rmin), float(e_rmax),
+                            ):
+                                st.success(f"#{edit_id} 수정 완료")
+                                st.rerun()
+                            else:
+                                st.error("수정 실패")
+                        else:
+                            st.error("입력값을 확인해 주세요.")
 
             with st.expander("RPM 전체 표 / 삭제"):
                 styled = df.drop(columns=["RPM편차", "효율갭"], errors="ignore").style.format({

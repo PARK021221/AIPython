@@ -164,6 +164,60 @@ def delete_record(record_id: int) -> bool:
         return False
 
 
+def update_record(
+    record_id: int,
+    propeller_name: str,
+    vessel_speed: float,
+    propeller_diameter: float,
+    rpm: float,
+    shaft_power: float,
+    thrust: float,
+    rpm_min: float,
+    rpm_max: float,
+) -> bool:
+    """RPM 기록 수정 — 입력값으로 효율·최적 RPM 재계산 후 저장"""
+    from calculator import calculate_all
+
+    try:
+        result = calculate_all(
+            vessel_speed, rpm, propeller_diameter,
+            thrust, shaft_power, rpm_min, rpm_max,
+        )
+        connection = sqlite3.connect(DB_PATH)
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE rpm_records SET
+                propeller_name = ?, vessel_speed = ?, propeller_diameter = ?,
+                rpm = ?, shaft_power = ?, thrust = ?,
+                measured_efficiency = ?, model_efficiency = ?,
+                optimal_rpm = ?, max_efficiency = ?, advance_ratio = ?
+            WHERE id = ?
+            """,
+            (
+                propeller_name,
+                vessel_speed,
+                propeller_diameter,
+                rpm,
+                shaft_power,
+                thrust,
+                result["measured_efficiency"],
+                result["model_efficiency"],
+                result["optimal_rpm"],
+                result["max_efficiency"],
+                result["advance_ratio"],
+                record_id,
+            ),
+        )
+        updated = cursor.rowcount > 0
+        connection.commit()
+        connection.close()
+        return updated
+    except (sqlite3.Error, ValueError) as e:
+        print(f"DB 수정 오류 : {e}")
+        return False
+
+
 def save_departure_record(
     vessel_name: str,
     wind_speed_ms: float,
